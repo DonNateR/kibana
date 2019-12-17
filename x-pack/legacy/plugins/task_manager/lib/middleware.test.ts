@@ -37,7 +37,7 @@ const getMockConcreteTaskInstance = () => {
     sequenceNumber: 1,
     primaryTerm: 1,
     attempts: 0,
-    status: 'idle',
+    status: TaskStatus.Idle,
     runAt: new Date(moment('2018-09-18T05:33:09.588Z').valueOf()),
     scheduledAt: new Date(moment('2018-09-18T05:33:09.588Z').valueOf()),
     startedAt: null,
@@ -70,6 +70,7 @@ describe('addMiddlewareToChain', () => {
         return opts;
       },
       beforeRun: defaultBeforeRun,
+      beforeMarkRunning: defaultBeforeRun,
     };
     const m2 = {
       beforeSave: async (opts: BeforeSaveOpts) => {
@@ -77,6 +78,7 @@ describe('addMiddlewareToChain', () => {
         return opts;
       },
       beforeRun: defaultBeforeRun,
+      beforeMarkRunning: defaultBeforeRun,
     };
     const m3 = {
       beforeSave: async (opts: BeforeSaveOpts) => {
@@ -84,6 +86,7 @@ describe('addMiddlewareToChain', () => {
         return opts;
       },
       beforeRun: defaultBeforeRun,
+      beforeMarkRunning: defaultBeforeRun,
     };
 
     let middlewareChain;
@@ -119,6 +122,7 @@ describe('addMiddlewareToChain', () => {
           m1: true,
         };
       },
+      beforeMarkRunning: defaultBeforeRun,
     };
     const m2 = {
       beforeSave: defaultBeforeSave,
@@ -128,6 +132,7 @@ describe('addMiddlewareToChain', () => {
           m2: true,
         };
       },
+      beforeMarkRunning: defaultBeforeRun,
     };
     const m3 = {
       beforeSave: defaultBeforeSave,
@@ -137,6 +142,7 @@ describe('addMiddlewareToChain', () => {
           m3: true,
         };
       },
+      beforeMarkRunning: defaultBeforeRun,
     };
 
     let middlewareChain;

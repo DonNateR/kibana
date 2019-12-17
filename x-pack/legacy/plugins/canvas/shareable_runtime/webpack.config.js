@@ -41,6 +41,7 @@ module.exports = {
         KIBANA_ROOT,
         'src/legacy/core_plugins/interpreter/public/types'
       ),
+      tinymath: path.resolve(KIBANA_ROOT, 'node_modules/tinymath/lib/tinymath.es5.js'),
     },
     extensions: ['.js', '.json', '.ts', '.tsx', '.scss'],
   },
@@ -98,10 +99,11 @@ module.exports = {
           {
             loader: 'css-loader',
             options: {
-              modules: true,
-              localIdentName: '[name]__[local]___[hash:base64:5]',
-              camelCase: true,
+              localsConvention: 'camelCaseOnly',
               sourceMap: !isProd,
+              modules: {
+                localIdentName: '[name]__[local]___[hash:base64:5]',
+              },
             },
           },
           {

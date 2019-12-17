@@ -7,35 +7,31 @@
 import React from 'react';
 import { ReactWrapper } from 'enzyme';
 import { act } from 'react-dom/test-utils';
-import { buildExistsFilter } from '@kbn/es-query';
 import { App } from './app';
 import { EditorFrameInstance } from '../types';
 import { Storage } from '../../../../../../src/plugins/kibana_utils/public';
 import { Document, SavedObjectStore } from '../persistence';
 import { mount } from 'enzyme';
-
+import { esFilters, IFieldType, IIndexPattern } from '../../../../../../src/plugins/data/public';
 import { dataPluginMock } from '../../../../../../src/plugins/data/public/mocks';
 const dataStartMock = dataPluginMock.createStartContract();
 
-import { TopNavMenuData } from '../../../../../../src/legacy/core_plugins/navigation/public';
+import { TopNavMenuData } from '../../../../../../src/plugins/navigation/public';
 import { DataStart } from '../../../../../../src/legacy/core_plugins/data/public';
 import { coreMock } from 'src/core/public/mocks';
-
-jest.mock('../../../../../../src/legacy/core_plugins/navigation/public/legacy', () => ({
-  start: {
-    ui: {
-      TopNavMenu: jest.fn(() => null),
-    },
-  },
-}));
-
-import { start as navigation } from '../../../../../../src/legacy/core_plugins/navigation/public/legacy';
-
-const { TopNavMenu } = navigation.ui;
 
 jest.mock('ui/new_platform');
 jest.mock('../persistence');
 jest.mock('src/core/public');
+
+import { npStart } from 'ui/new_platform';
+jest
+  .spyOn(npStart.plugins.navigation.ui.TopNavMenu.prototype, 'constructor')
+  .mockImplementation(() => {
+    return <div className="topNavMenu" />;
+  });
+
+const { TopNavMenu } = npStart.plugins.navigation.ui;
 
 const waitForPromises = () => new Promise(resolve => setTimeout(resolve));
 
@@ -100,17 +96,18 @@ describe('Lens App', () => {
       data: {
         query: {
           filterManager: createMockFilterManager(),
-        },
-      },
-      dataShim: {
-        indexPatterns: {
-          indexPatterns: {
-            get: jest.fn(id => {
-              return new Promise(resolve => resolve({ id }));
-            }),
+          timefilter: {
+            timefilter: {
+              getTime: jest.fn(() => ({ from: 'now-7d', to: 'now' })),
+              setTime: jest.fn(),
+            },
           },
         },
-        timefilter: { history: {} },
+        indexPatterns: {
+          get: jest.fn(id => {
+            return new Promise(resolve => resolve({ id }));
+          }),
+        },
       },
       storage: {
         get: jest.fn(),
@@ -234,7 +231,7 @@ describe('Lens App', () => {
       await waitForPromises();
 
       expect(args.docStorage.load).toHaveBeenCalledWith('1234');
-      expect(args.dataShim.indexPatterns.indexPatterns.get).toHaveBeenCalledWith('1');
+      expect(args.data.indexPatterns.get).toHaveBeenCalledWith('1');
       expect(TopNavMenu).toHaveBeenCalledWith(
         expect.objectContaining({
           query: 'fake query',
@@ -312,9 +309,9 @@ describe('Lens App', () => {
 
         instance.update();
 
-        const handler = instance.findWhere(el => el.prop('onSave')).prop('onSave') as ((
+        const handler = instance.findWhere(el => el.prop('onSave')).prop('onSave') as (
           p: unknown
-        ) => void);
+        ) => void;
         handler(saveProps);
       }
 
@@ -593,17 +590,17 @@ describe('Lens App', () => {
       args.editorFrame = frame;
 
       const instance = mount(<App {...args} />);
+      const indexPattern = ({ id: 'index1' } as unknown) as IIndexPattern;
+      const field = ({ name: 'myfield' } as unknown) as IFieldType;
 
-      args.data.query.filterManager.setFilters([
-        buildExistsFilter({ name: 'myfield' }, { id: 'index1' }),
-      ]);
+      args.data.query.filterManager.setFilters([esFilters.buildExistsFilter(field, indexPattern)]);
 
       instance.update();
 
       expect(frame.mount).toHaveBeenCalledWith(
         expect.any(Element),
         expect.objectContaining({
-          filters: [buildExistsFilter({ name: 'myfield' }, { id: 'index1' })],
+          filters: [esFilters.buildExistsFilter(field, indexPattern)],
         })
       );
     });
@@ -725,9 +722,10 @@ describe('Lens App', () => {
         query: { query: 'new', language: 'lucene' },
       });
 
-      args.data.query.filterManager.setFilters([
-        buildExistsFilter({ name: 'myfield' }, { id: 'index1' }),
-      ]);
+      const indexPattern = ({ id: 'index1' } as unknown) as IIndexPattern;
+      const field = ({ name: 'myfield' } as unknown) as IFieldType;
+
+      args.data.query.filterManager.setFilters([esFilters.buildExistsFilter(field, indexPattern)]);
       instance.update();
 
       instance.find(TopNavMenu).prop('onClearSavedQuery')!();

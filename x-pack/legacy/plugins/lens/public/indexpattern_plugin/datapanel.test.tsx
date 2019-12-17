@@ -14,9 +14,9 @@ import { IndexPatternPrivateState } from './types';
 import { mountWithIntl, shallowWithIntl } from 'test_utils/enzyme_helpers';
 import { ChangeIndexPattern } from './change_indexpattern';
 import { EuiProgress } from '@elastic/eui';
+import { documentField } from './document_field';
 
 jest.mock('ui/new_platform');
-jest.mock('../../../../../../src/legacy/ui/public/registry/field_formats');
 
 const initialState: IndexPatternPrivateState = {
   indexPatternRefs: [],
@@ -121,6 +121,7 @@ const initialState: IndexPatternPrivateState = {
           aggregatable: true,
           searchable: true,
         },
+        documentField,
       ],
     },
     '2': {
@@ -174,6 +175,7 @@ const initialState: IndexPatternPrivateState = {
             },
           },
         },
+        documentField,
       ],
     },
     '3': {
@@ -199,6 +201,7 @@ const initialState: IndexPatternPrivateState = {
           aggregatable: true,
           searchable: true,
         },
+        documentField,
       ],
     },
   },
@@ -275,7 +278,7 @@ describe('IndexPattern Data Panel', () => {
 
     function testProps() {
       const setState = jest.fn();
-      core.http.get = jest.fn(async (url: string) => {
+      core.http.get.mockImplementation(async (url: string) => {
         const parts = url.split('/');
         const indexPatternTitle = parts[parts.length - 1];
         return {
@@ -325,10 +328,10 @@ describe('IndexPattern Data Panel', () => {
         act(() => {
           ((inst.setProps as unknown) as (props: unknown) => {})({
             ...props,
-            ...(propChanges || {}),
+            ...((propChanges as object) || {}),
             state: {
               ...props.state,
-              ...(stateChanges || {}),
+              ...((stateChanges as object) || {}),
             },
           });
           inst.update();
@@ -481,7 +484,7 @@ describe('IndexPattern Data Panel', () => {
       let overlapCount = 0;
       const props = testProps();
 
-      core.http.get = jest.fn((url: string) => {
+      core.http.get.mockImplementation((url: string) => {
         if (queryCount) {
           ++overlapCount;
         }
@@ -530,11 +533,9 @@ describe('IndexPattern Data Panel', () => {
     it('shows all fields if empty state button is clicked', async () => {
       const props = testProps();
 
-      core.http.get = jest.fn((url: string) => {
-        return Promise.resolve({
-          indexPatternTitle: props.currentIndexPatternId,
-          existingFieldNames: [],
-        });
+      core.http.get.mockResolvedValue({
+        indexPatternTitle: props.currentIndexPatternId,
+        existingFieldNames: [],
       });
 
       const inst = mountWithIntl(<IndexPatternDataPanel {...props} />);
@@ -565,6 +566,7 @@ describe('IndexPattern Data Panel', () => {
       );
 
       expect(wrapper.find(FieldItem).map(fieldItem => fieldItem.prop('field').name)).toEqual([
+        'Records',
         'bytes',
         'client',
         'memory',
@@ -630,6 +632,7 @@ describe('IndexPattern Data Panel', () => {
         .simulate('click');
 
       expect(wrapper.find(FieldItem).map(fieldItem => fieldItem.prop('field').name)).toEqual([
+        'Records',
         'bytes',
         'client',
         'memory',
@@ -698,6 +701,7 @@ describe('IndexPattern Data Panel', () => {
       const wrapper = shallowWithIntl(<InnerIndexPatternDataPanel {...props} />);
 
       expect(wrapper.find(FieldItem).map(fieldItem => fieldItem.prop('field').name)).toEqual([
+        'Records',
         'bytes',
         'memory',
       ]);

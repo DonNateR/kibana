@@ -10,15 +10,23 @@
  * rescheduling, middleware application, etc.
  */
 
+import { performance } from 'perf_hooks';
 import Joi from 'joi';
+import { identity, defaults, flow } from 'lodash';
+
+import { asOk, asErr, mapErr, eitherAsync, unwrap, mapOk, Result } from './lib/result_type';
+import { TaskRun, TaskMarkRunning, asTaskRunEvent, asTaskMarkRunningEvent } from './task_events';
 import { intervalFromDate, intervalFromNow } from './lib/intervals';
 import { Logger } from './types';
-import { BeforeRunFunction } from './lib/middleware';
+import { BeforeRunFunction, BeforeMarkRunningFunction } from './lib/middleware';
 import {
   CancelFunction,
   CancellableTask,
   ConcreteTaskInstance,
   RunResult,
+  SuccessfulRunResult,
+  FailedRunResult,
+  FailedTaskResult,
   TaskDefinition,
   TaskDictionary,
   validateRunResult,
@@ -26,13 +34,15 @@ import {
 } from './task';
 
 const defaultBackoffPerFailure = 5 * 60 * 1000;
+const EMPTY_RUN_RESULT: SuccessfulRunResult = {};
 
 export interface TaskRunner {
   isExpired: boolean;
   cancel: CancelFunction;
   markTaskAsRunning: () => Promise<boolean>;
-  run: () => Promise<RunResult>;
-  toString?: () => string;
+  run: () => Promise<Result<SuccessfulRunResult, FailedRunResult>>;
+  id: string;
+  toString: () => string;
 }
 
 interface Updatable {
@@ -47,6 +57,8 @@ interface Opts {
   instance: ConcreteTaskInstance;
   store: Updatable;
   beforeRun: BeforeRunFunction;
+  beforeMarkRunning: BeforeMarkRunningFunction;
+  onTaskEvent?: (event: TaskRun | TaskMarkRunning) => void;
 }
 
 /**
@@ -62,8 +74,10 @@ export class TaskManagerRunner implements TaskRunner {
   private instance: ConcreteTaskInstance;
   private definitions: TaskDictionary<TaskDefinition>;
   private logger: Logger;
-  private store: Updatable;
+  private bufferedTaskStore: Updatable;
   private beforeRun: BeforeRunFunction;
+  private beforeMarkRunning: BeforeMarkRunningFunction;
+  private onTaskEvent: (event: TaskRun | TaskMarkRunning) => void;
 
   /**
    * Creates an instance of TaskManagerRunner.
@@ -75,12 +89,22 @@ export class TaskManagerRunner implements TaskRunner {
    * @prop {BeforeRunFunction} beforeRun - A function that adjusts the run context prior to running the task
    * @memberof TaskManagerRunner
    */
-  constructor(opts: Opts) {
-    this.instance = sanitizeInstance(opts.instance);
-    this.definitions = opts.definitions;
-    this.logger = opts.logger;
-    this.store = opts.store;
-    this.beforeRun = opts.beforeRun;
+  constructor({
+    instance,
+    definitions,
+    logger,
+    store,
+    beforeRun,
+    beforeMarkRunning,
+    onTaskEvent = identity,
+  }: Opts) {
+    this.instance = sanitizeInstance(instance);
+    this.definitions = definitions;
+    this.logger = logger;
+    this.bufferedTaskStore = store;
+    this.beforeRun = beforeRun;
+    this.beforeMarkRunning = beforeMarkRunning;
+    this.onTaskEvent = onTaskEvent;
   }
 
   /**
@@ -124,9 +148,9 @@ export class TaskManagerRunner implements TaskRunner {
    * into the total timeout time the task in configured with. We may decide to
    * start the timer after beforeRun resolves
    *
-   * @returns {Promise<RunResult>}
+   * @returns {Promise<Result<SuccessfulRunResult, FailedRunResult>>}
    */
-  public async run(): Promise<RunResult> {
+  public async run(): Promise<Result<SuccessfulRunResult, FailedRunResult>> {
     this.logger.debug(`Running task ${this}`);
     const modifiedContext = await this.beforeRun({
       taskInstance: this.instance,
@@ -139,10 +163,9 @@ export class TaskManagerRunner implements TaskRunner {
       return this.processResult(validatedResult);
     } catch (err) {
       this.logger.error(`Task ${this} failed: ${err}`);
-
       // in error scenario, we can not get the RunResult
       // re-use modifiedContext's state, which is correct as of beforeRun
-      return this.processResult({ error: err, state: modifiedContext.taskInstance.state });
+      return this.processResult(asErr({ error: err, state: modifiedContext.taskInstance.state }));
     }
   }
 
@@ -153,14 +176,20 @@ export class TaskManagerRunner implements TaskRunner {
    * @returns {Promise<boolean>}
    */
   public async markTaskAsRunning(): Promise<boolean> {
+    performance.mark('markTaskAsRunning_start');
+
     const VERSION_CONFLICT_STATUS = 409;
-    const attempts = this.instance.attempts + 1;
     const now = new Date();
 
-    const ownershipClaimedUntil = this.instance.retryAt;
+    const { taskInstance } = await this.beforeMarkRunning({
+      taskInstance: this.instance,
+    });
+
+    const attempts = taskInstance.attempts + 1;
+    const ownershipClaimedUntil = taskInstance.retryAt;
 
     try {
-      const { id } = this.instance;
+      const { id } = taskInstance;
 
       const timeUntilClaimExpires = howManyMsUntilOwnershipClaimExpires(ownershipClaimedUntil);
       if (timeUntilClaimExpires < 0) {
@@ -171,12 +200,12 @@ export class TaskManagerRunner implements TaskRunner {
         );
       }
 
-      this.instance = await this.store.update({
-        ...this.instance,
-        status: 'running',
+      this.instance = await this.bufferedTaskStore.update({
+        ...taskInstance,
+        status: TaskStatus.Running,
         startedAt: now,
         attempts,
-        retryAt: this.instance.interval
+        retryAt: this.instance.schedule
           ? intervalFromNow(this.definition.timeout)!
           : this.getRetryDelay({
               attempts,
@@ -198,13 +227,16 @@ export class TaskManagerRunner implements TaskRunner {
         );
       }
 
+      performanceStopMarkingTaskAsRunning();
+      this.onTaskEvent(asTaskMarkRunningEvent(this.id, asOk(this.instance)));
       return true;
     } catch (error) {
+      performanceStopMarkingTaskAsRunning();
+      this.onTaskEvent(asTaskMarkRunningEvent(this.id, asErr(error)));
       if (error.statusCode !== VERSION_CONFLICT_STATUS) {
         throw error;
       }
     }
-
     return false;
   }
 
@@ -223,64 +255,94 @@ export class TaskManagerRunner implements TaskRunner {
     this.logger.warn(`The task ${this} is not cancellable.`);
   }
 
-  private validateResult(result?: RunResult | void): RunResult {
+  private validateResult(result?: RunResult | void): Result<SuccessfulRunResult, FailedRunResult> {
     const { error } = Joi.validate(result, validateRunResult);
 
     if (error) {
       this.logger.warn(`Invalid task result for ${this}: ${error.message}`);
+      return asErr({
+        error: new Error(`Invalid task result for ${this}: ${error.message}`),
+        state: {},
+      });
+    }
+    if (!result) {
+      return asOk(EMPTY_RUN_RESULT);
     }
 
-    return result || { state: {} };
+    return result.error ? asErr({ ...result, error: result.error as Error }) : asOk(result);
   }
 
-  private async processResultForRecurringTask(result: RunResult): Promise<RunResult> {
-    // recurring task: update the task instance
-    const startedAt = this.instance.startedAt!;
-    const state = result.state || this.instance.state || {};
-    let status: TaskStatus = this.getInstanceStatus();
+  private shouldTryToScheduleRetry(): boolean {
+    if (this.instance.schedule) {
+      return true;
+    }
 
-    let runAt;
-    if (status === 'failed') {
-      // task run errored, keep the same runAt
-      runAt = this.instance.runAt;
-    } else if (result.runAt) {
-      runAt = result.runAt;
-    } else if (result.error) {
-      // when result.error is truthy, then we're retrying because it failed
-      const newRunAt = this.instance.interval
-        ? intervalFromDate(startedAt, this.instance.interval)!
-        : this.getRetryDelay({
-            attempts: this.instance.attempts,
-            error: result.error,
-          });
-      if (!newRunAt) {
-        status = 'failed';
-        runAt = this.instance.runAt;
+    const maxAttempts = this.definition.maxAttempts || this.bufferedTaskStore.maxAttempts;
+    return this.instance.attempts < maxAttempts;
+  }
+
+  private rescheduleFailedRun = (
+    failureResult: FailedRunResult
+  ): Result<SuccessfulRunResult, FailedTaskResult> => {
+    if (this.shouldTryToScheduleRetry()) {
+      const { runAt, state, error } = failureResult;
+      // if we're retrying, keep the number of attempts
+      const { schedule, attempts } = this.instance;
+      if (runAt || schedule) {
+        return asOk({ state, attempts, runAt });
       } else {
-        runAt = newRunAt;
+        // when result.error is truthy, then we're retrying because it failed
+        const newRunAt = this.getRetryDelay({
+          attempts,
+          error,
+        });
+
+        if (newRunAt) {
+          return asOk({ state, attempts, runAt: newRunAt });
+        }
       }
-    } else {
-      runAt = intervalFromDate(startedAt, this.instance.interval)!;
     }
+    // scheduling a retry isn't possible,mark task as failed
+    return asErr({ status: TaskStatus.Failed });
+  };
 
-    await this.store.update({
-      ...this.instance,
-      runAt,
-      state,
-      status,
-      startedAt: null,
-      retryAt: null,
-      ownerId: null,
-      attempts: result.error ? this.instance.attempts : 0,
-    });
+  private async processResultForRecurringTask(
+    result: Result<SuccessfulRunResult, FailedRunResult>
+  ): Promise<void> {
+    const fieldUpdates = flow(
+      // if running the task has failed ,try to correct by scheduling a retry in the near future
+      mapErr(this.rescheduleFailedRun),
+      // if retrying is possible (new runAt) or this is an recurring task - reschedule
+      mapOk(({ runAt, state, attempts = 0 }: Partial<ConcreteTaskInstance>) => {
+        const { startedAt, schedule: { interval = undefined } = {} } = this.instance;
+        return asOk({
+          runAt: runAt || intervalFromDate(startedAt!, interval)!,
+          state,
+          attempts,
+          status: TaskStatus.Idle,
+        });
+      }),
+      unwrap
+    )(result);
 
-    return result;
+    await this.bufferedTaskStore.update(
+      defaults(
+        {
+          ...fieldUpdates,
+          // reset fields that track the lifecycle of the concluded `task run`
+          startedAt: null,
+          retryAt: null,
+          ownerId: null,
+        },
+        this.instance
+      )
+    );
   }
 
-  private async processResultWhenDone(result: RunResult): Promise<RunResult> {
+  private async processResultWhenDone(): Promise<void> {
     // not a recurring task: clean up by removing the task instance from store
     try {
-      await this.store.remove(this.instance.id);
+      await this.bufferedTaskStore.remove(this.instance.id);
     } catch (err) {
       if (err.statusCode === 404) {
         this.logger.warn(`Task cleanup of ${this} failed in processing. Was remove called twice?`);
@@ -288,26 +350,27 @@ export class TaskManagerRunner implements TaskRunner {
         throw err;
       }
     }
-
-    return result;
   }
 
-  private async processResult(result: RunResult): Promise<RunResult> {
-    if (result.runAt || this.instance.interval || result.error) {
-      await this.processResultForRecurringTask(result);
-    } else {
-      await this.processResultWhenDone(result);
-    }
+  private async processResult(
+    result: Result<SuccessfulRunResult, FailedRunResult>
+  ): Promise<Result<SuccessfulRunResult, FailedRunResult>> {
+    await eitherAsync(
+      result,
+      async ({ runAt }: SuccessfulRunResult) => {
+        if (runAt || this.instance.schedule) {
+          await this.processResultForRecurringTask(result);
+        } else {
+          await this.processResultWhenDone();
+        }
+        this.onTaskEvent(asTaskRunEvent(this.id, asOk(this.instance)));
+      },
+      async ({ error }: FailedRunResult) => {
+        await this.processResultForRecurringTask(result);
+        this.onTaskEvent(asTaskRunEvent(this.id, asErr(error)));
+      }
+    );
     return result;
-  }
-
-  private getInstanceStatus() {
-    if (this.instance.interval) {
-      return 'idle';
-    }
-
-    const maxAttempts = this.definition.maxAttempts || this.store.maxAttempts;
-    return this.instance.attempts < maxAttempts ? 'idle' : 'failed';
   }
 
   private getRetryDelay({
@@ -336,7 +399,6 @@ export class TaskManagerRunner implements TaskRunner {
     if (addDuration && result) {
       result = intervalFromDate(result, addDuration)!;
     }
-
     return result;
   }
 }
@@ -351,4 +413,13 @@ function sanitizeInstance(instance: ConcreteTaskInstance): ConcreteTaskInstance 
 
 function howManyMsUntilOwnershipClaimExpires(ownershipClaimedUntil: Date | null): number {
   return ownershipClaimedUntil ? ownershipClaimedUntil.getTime() - Date.now() : 0;
+}
+
+function performanceStopMarkingTaskAsRunning() {
+  performance.mark('markTaskAsRunning_stop');
+  performance.measure(
+    'taskRunner.markTaskAsRunning',
+    'markTaskAsRunning_start',
+    'markTaskAsRunning_stop'
+  );
 }

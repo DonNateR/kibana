@@ -11,6 +11,20 @@ import Joi from 'joi';
  */
 
 /**
+ * Require
+ * @desc Create a Subtype of type T `T` such that the property under key `P` becomes required
+ * @example
+ *    type TaskInstance = {
+ *      id?: string;
+ *      name: string;
+ *    };
+ *
+ *    // This type is now defined as { id: string; name: string; }
+ *    type TaskInstanceWithId = Require<TaskInstance, 'id'>;
+ */
+type Require<T extends object, P extends keyof T> = Omit<T, P> & Required<Pick<T, P>>;
+
+/**
  * A loosely typed definition of the elasticjs wrapper. It's beyond the scope
  * of this work to try to make a comprehensive type definition of this.
  */
@@ -48,6 +62,19 @@ export interface RunResult {
    * recurring task). See the RunContext type definition for more details.
    */
   state: Record<string, any>;
+}
+
+export interface SuccessfulRunResult {
+  runAt?: Date;
+  state?: Record<string, any>;
+}
+
+export interface FailedRunResult extends SuccessfulRunResult {
+  error: Error;
+}
+
+export interface FailedTaskResult {
+  status: TaskStatus.Failed;
 }
 
 export const validateRunResult = Joi.object({
@@ -106,7 +133,7 @@ export interface TaskDefinition {
    * function can return `true`, `false` or a Date. True will tell task manager
    * to retry using default delay logic. False will tell task manager to stop retrying
    * this task. Date will suggest when to the task manager the task should retry.
-   * This function isn't used for interval type tasks, those retry at the next interval.
+   * This function isn't used for recurring tasks, those retry as per their configured recurring schedule.
    */
   getRetry?: (attempts: number, error: object) => boolean | Date;
 
@@ -136,7 +163,25 @@ export interface TaskDictionary<T extends TaskDefinition> {
   [taskType: string]: T;
 }
 
-export type TaskStatus = 'idle' | 'claiming' | 'running' | 'failed';
+export enum TaskStatus {
+  Idle = 'idle',
+  Claiming = 'claiming',
+  Running = 'running',
+  Failed = 'failed',
+}
+
+export enum TaskLifecycleResult {
+  NotFound = 'notFound',
+}
+
+export type TaskLifecycle = TaskStatus | TaskLifecycleResult;
+
+export interface IntervalSchedule {
+  /**
+   * An interval in minutes (e.g. '5m'). If specified, this is a recurring task.
+   * */
+  interval: string;
+}
 
 /*
  * A task instance represents all of the data required to store, fetch,
@@ -182,9 +227,11 @@ export interface TaskInstance {
   runAt?: Date;
 
   /**
-   * An interval in minutes (e.g. '5m'). If specified, this is a recurring task.
+   * A TaskSchedule string, which specifies this as a recurring task.
+   *
+   * Currently, this supports a single format: an interval in minutes or seconds (e.g. '5m', '30s').
    */
-  interval?: string;
+  schedule?: IntervalSchedule;
 
   /**
    * A task-specific set of parameters, used by the task's run function to tailor
@@ -215,6 +262,23 @@ export interface TaskInstance {
    */
   ownerId?: string | null;
 }
+
+/**
+ * Support for the depracated interval field, this should be removed in version 8.0.0
+ * and marked as a breaking change, ideally nutil then all usage of `interval` will be
+ * replaced with use of `schedule`
+ */
+export interface TaskInstanceWithDeprecatedFields extends TaskInstance {
+  /**
+   * An interval in minutes (e.g. '5m'). If specified, this is a recurring task.
+   * */
+  interval?: string;
+}
+
+/**
+ * A task instance that has an id.
+ */
+export type TaskInstanceWithId = Require<TaskInstance, 'id'>;
 
 /**
  * A task instance that has an id and is ready for storage.
