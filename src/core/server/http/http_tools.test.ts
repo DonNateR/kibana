@@ -29,10 +29,9 @@ import { defaultValidationErrorHandler, HapiValidationError, getServerOptions } 
 import { HttpServer } from './http_server';
 import { HttpConfig, config } from './http_config';
 import { Router } from './router';
+import { createMockEnv } from '../config/env.mock';
 import { loggingServiceMock } from '../logging/logging_service.mock';
 import { ByteSizeValue } from '@kbn/config-schema';
-import { Env } from '../config';
-import { getEnvOptions } from '../config/__mocks__/env';
 
 const emptyOutput = {
   statusCode: 400,
@@ -123,7 +122,7 @@ describe('getServerOptions', () => {
         },
       }),
       {} as any,
-      Env.createDefault(getEnvOptions())
+      createMockEnv()
     );
 
     expect(getServerOptions(httpConfig).tls).toMatchInlineSnapshot(`
@@ -153,7 +152,7 @@ describe('getServerOptions', () => {
         },
       }),
       {} as any,
-      Env.createDefault(getEnvOptions())
+      createMockEnv()
     );
 
     expect(getServerOptions(httpConfig).tls).toMatchInlineSnapshot(`

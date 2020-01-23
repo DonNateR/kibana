@@ -11,12 +11,14 @@ import { instantiateClient } from './es_client/instantiate_client';
 import { initMonitoringXpackInfo } from './init_monitoring_xpack_info';
 import { initBulkUploader, registerCollectors } from './kibana_monitoring';
 import { registerMonitoringCollection } from './telemetry_collection';
+import { parseElasticsearchConfig } from './es_client/parse_elasticsearch_config';
 
 export class Plugin {
   setup(core, plugins) {
     const kbnServer = core._kbnServer;
     const config = core.config();
     const usageCollection = plugins.usageCollection;
+    const licensing = plugins.licensing;
     registerMonitoringCollection();
     /*
      * Register collector objects for stats to show up in the APIs
@@ -35,6 +37,12 @@ export class Plugin {
      * fetch methods and uploads to the ES monitoring bulk endpoint
      */
     const xpackMainPlugin = plugins.xpack_main;
+
+    /*
+     * Parse the Elasticsearch config and read any certificates/keys if necessary
+     */
+    const elasticsearchConfig = parseElasticsearchConfig(config);
+
     xpackMainPlugin.status.once('green', async () => {
       // first time xpack_main turns green
       /*
@@ -46,7 +54,7 @@ export class Plugin {
         await instantiateClient({
           log: core.log,
           events: core.events,
-          config,
+          elasticsearchConfig,
           elasticsearchPlugin: plugins.elasticsearch,
         }); // Instantiate the dedicated ES client
         await initMonitoringXpackInfo({
@@ -91,17 +99,16 @@ export class Plugin {
       kbnServerVersion: kbnServer.version,
     });
     const kibanaCollectionEnabled = config.get('xpack.monitoring.kibana.collection.enabled');
-    const { info: xpackMainInfo } = xpackMainPlugin;
 
     if (kibanaCollectionEnabled) {
       /*
        * Bulk uploading of Kibana stats
        */
-      xpackMainInfo.onLicenseInfoChange(() => {
+      licensing.license$.subscribe(license => {
         // use updated xpack license info to start/stop bulk upload
-        const mainMonitoring = xpackMainInfo.feature('monitoring');
+        const mainMonitoring = license.getFeature('monitoring');
         const monitoringBulkEnabled =
-          mainMonitoring && mainMonitoring.isAvailable() && mainMonitoring.isEnabled();
+          mainMonitoring && mainMonitoring.isAvailable && mainMonitoring.isEnabled;
         if (monitoringBulkEnabled) {
           bulkUploader.start(usageCollection);
         } else {
@@ -115,7 +122,7 @@ export class Plugin {
       );
     }
 
-    core.injectUiAppVars('monitoring', core => {
+    core.injectUiAppVars('monitoring', () => {
       const config = core.config();
       return {
         maxBucketSize: config.get('xpack.monitoring.max_bucket_size'),

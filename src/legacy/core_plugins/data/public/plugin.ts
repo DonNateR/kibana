@@ -18,10 +18,25 @@
  */
 
 import { CoreSetup, CoreStart, Plugin } from 'kibana/public';
+import { SearchService, SearchStart } from './search';
 import { DataPublicPluginStart } from '../../../../plugins/data/public';
+import { ExpressionsSetup } from '../../../../plugins/expressions/public';
 
-// eslint-disable-next-line @kbn/eslint/no-restricted-paths
-import { setFieldFormats } from '../../../../plugins/data/public/services';
+import {
+  setFieldFormats,
+  setNotifications,
+  setIndexPatterns,
+  setQueryService,
+  setSearchService,
+  setUiSettings,
+  setInjectedMetadata,
+  setHttp,
+  // eslint-disable-next-line @kbn/eslint/no-restricted-paths
+} from '../../../../plugins/data/public/services';
+
+export interface DataPluginSetupDependencies {
+  expressions: ExpressionsSetup;
+}
 
 export interface DataPluginStartDependencies {
   data: DataPublicPluginStart;
@@ -32,8 +47,9 @@ export interface DataPluginStartDependencies {
  *
  * @public
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
-export interface DataStart {}
+export interface DataStart {
+  search: SearchStart;
+}
 
 /**
  * Data Plugin - public
@@ -47,14 +63,31 @@ export interface DataStart {}
  * or static code.
  */
 
-export class DataPlugin implements Plugin<void, DataStart, {}, DataPluginStartDependencies> {
-  public setup(core: CoreSetup) {}
+export class DataPlugin
+  implements Plugin<void, DataStart, DataPluginSetupDependencies, DataPluginStartDependencies> {
+  private readonly search = new SearchService();
+
+  public setup(core: CoreSetup) {
+    setInjectedMetadata(core.injectedMetadata);
+  }
 
   public start(core: CoreStart, { data }: DataPluginStartDependencies): DataStart {
     // This is required for when Angular code uses Field and FieldList.
     setFieldFormats(data.fieldFormats);
-    return {};
+    setQueryService(data.query);
+    setSearchService(data.search);
+    setIndexPatterns(data.indexPatterns);
+    setFieldFormats(data.fieldFormats);
+    setNotifications(core.notifications);
+    setUiSettings(core.uiSettings);
+    setHttp(core.http);
+
+    return {
+      search: this.search.start(core),
+    };
   }
 
-  public stop() {}
+  public stop() {
+    this.search.stop();
+  }
 }

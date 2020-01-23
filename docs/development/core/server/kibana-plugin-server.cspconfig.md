@@ -12,17 +12,17 @@ CSP configuration for use in Kibana.
 export declare class CspConfig implements ICspConfig 
 ```
 
+## Remarks
+
+The constructor for this class is marked as internal. Third-party code should not call the constructor directly or create subclasses that extend the `CspConfig` class.
+
 ## Properties
 
 |  Property | Modifiers | Type | Description |
 |  --- | --- | --- | --- |
-|  [DEFAULT](./kibana-plugin-server.cspconfig.default.md) | <code>static</code> | <code>CspConfig</code> |  |
 |  [header](./kibana-plugin-server.cspconfig.header.md) |  | <code>string</code> |  |
 |  [rules](./kibana-plugin-server.cspconfig.rules.md) |  | <code>string[]</code> |  |
+|  [rulesChangedFromDefault](./kibana-plugin-server.cspconfig.ruleschangedfromdefault.md) |  | <code>boolean</code> |  |
 |  [strict](./kibana-plugin-server.cspconfig.strict.md) |  | <code>boolean</code> |  |
 |  [warnLegacyBrowsers](./kibana-plugin-server.cspconfig.warnlegacybrowsers.md) |  | <code>boolean</code> |  |
-
-## Remarks
-
-The constructor for this class is marked as internal. Third-party code should not call the constructor directly or create subclasses that extend the `CspConfig` class.
 

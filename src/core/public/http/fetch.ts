@@ -35,19 +35,29 @@ interface Params {
 const JSON_CONTENT = /^(application\/(json|x-javascript)|text\/(x-)?javascript|x-json)(;.*)?$/;
 const NDJSON_CONTENT = /^(application\/ndjson)(;.*)?$/;
 
-export class FetchService {
+export class Fetch {
   private readonly interceptors = new Set<HttpInterceptor>();
 
   constructor(private readonly params: Params) {}
 
   public intercept(interceptor: HttpInterceptor) {
     this.interceptors.add(interceptor);
-    return () => this.interceptors.delete(interceptor);
+    return () => {
+      this.interceptors.delete(interceptor);
+    };
   }
 
   public removeAllInterceptors() {
     this.interceptors.clear();
   }
+
+  public readonly delete = this.shorthand('DELETE');
+  public readonly get = this.shorthand('GET');
+  public readonly head = this.shorthand('HEAD');
+  public readonly options = this.shorthand('options');
+  public readonly patch = this.shorthand('PATCH');
+  public readonly post = this.shorthand('POST');
+  public readonly put = this.shorthand('PUT');
 
   public fetch: HttpHandler = async <TResponseBody>(
     path: string,
@@ -123,7 +133,11 @@ export class FetchService {
     try {
       response = await window.fetch(request);
     } catch (err) {
-      throw new HttpFetchError(err.message, request);
+      if (err.name === 'AbortError') {
+        throw err;
+      } else {
+        throw new HttpFetchError(err.message, request);
+      }
     }
 
     const contentType = response.headers.get('Content-Type') || '';
@@ -151,5 +165,10 @@ export class FetchService {
     }
 
     return new HttpResponse({ request, response, body });
+  }
+
+  private shorthand(method: string) {
+    return (path: string, options: HttpFetchOptions = {}) =>
+      this.fetch(path, { ...options, method });
   }
 }
