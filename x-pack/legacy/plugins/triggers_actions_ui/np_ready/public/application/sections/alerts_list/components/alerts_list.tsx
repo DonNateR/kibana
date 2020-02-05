@@ -6,7 +6,7 @@
 
 import { i18n } from '@kbn/i18n';
 import { FormattedMessage } from '@kbn/i18n/react';
-import React, { Fragment, useEffect, useState } from 'react';
+import React, { useEffect, useState, Fragment } from 'react';
 import {
   EuiBasicTable,
   EuiButton,
@@ -15,48 +15,64 @@ import {
   EuiFlexItem,
   EuiIcon,
   EuiSpacer,
+  EuiEmptyPrompt,
+  EuiLink,
 } from '@elastic/eui';
+import { useHistory } from 'react-router-dom';
 
 import { AlertsContextProvider } from '../../../context/alerts_context';
 import { useAppDependencies } from '../../../app_context';
 import { ActionType, Alert, AlertTableItem, AlertTypeIndex, Pagination } from '../../../../types';
 import { AlertAdd } from '../../alert_add';
-import { BulkActionPopover } from './bulk_action_popover';
-import { CollapsedItemActions } from './collapsed_item_actions';
+import { BulkOperationPopover } from '../../common/components/bulk_operation_popover';
+import { AlertQuickEditButtonsWithApi as AlertQuickEditButtons } from '../../common/components/alert_quick_edit_buttons';
+import { CollapsedItemActionsWithApi as CollapsedItemActions } from './collapsed_item_actions';
 import { TypeFilter } from './type_filter';
 import { ActionTypeFilter } from './action_type_filter';
 import { loadAlerts, loadAlertTypes } from '../../../lib/alert_api';
 import { loadActionTypes } from '../../../lib/action_connector_api';
 import { hasDeleteAlertsCapability, hasSaveAlertsCapability } from '../../../lib/capabilities';
+import { routeToAlertDetails } from '../../../constants';
 
 const ENTER_KEY = 13;
 
+interface AlertTypeState {
+  isLoading: boolean;
+  isInitialized: boolean;
+  data: AlertTypeIndex;
+}
+interface AlertState {
+  isLoading: boolean;
+  data: Alert[];
+  totalItemCount: number;
+}
+
 export const AlertsList: React.FunctionComponent = () => {
-  const {
-    http,
-    injectedMetadata,
-    toastNotifications,
-    legacy: { capabilities },
-  } = useAppDependencies();
-  const canDelete = hasDeleteAlertsCapability(capabilities.get());
-  const canSave = hasSaveAlertsCapability(capabilities.get());
+  const history = useHistory();
+  const { http, injectedMetadata, toastNotifications, capabilities } = useAppDependencies();
+  const canDelete = hasDeleteAlertsCapability(capabilities);
+  const canSave = hasSaveAlertsCapability(capabilities);
   const createAlertUiEnabled = injectedMetadata.getInjectedVar('createAlertUiEnabled');
 
   const [actionTypes, setActionTypes] = useState<ActionType[]>([]);
-  const [alertTypesIndex, setAlertTypesIndex] = useState<AlertTypeIndex | undefined>(undefined);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [data, setData] = useState<AlertTableItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [isLoadingAlertTypes, setIsLoadingAlertTypes] = useState<boolean>(false);
-  const [isLoadingAlerts, setIsLoadingAlerts] = useState<boolean>(false);
   const [isPerformingAction, setIsPerformingAction] = useState<boolean>(false);
-  const [totalItemCount, setTotalItemCount] = useState<number>(0);
   const [page, setPage] = useState<Pagination>({ index: 0, size: 10 });
   const [searchText, setSearchText] = useState<string | undefined>();
   const [inputText, setInputText] = useState<string | undefined>();
   const [typesFilter, setTypesFilter] = useState<string[]>([]);
   const [actionTypesFilter, setActionTypesFilter] = useState<string[]>([]);
   const [alertFlyoutVisible, setAlertFlyoutVisibility] = useState<boolean>(false);
+  const [alertTypesState, setAlertTypesState] = useState<AlertTypeState>({
+    isLoading: false,
+    isInitialized: false,
+    data: {},
+  });
+  const [alertsState, setAlertsState] = useState<AlertState>({
+    isLoading: false,
+    data: [],
+    totalItemCount: 0,
+  });
 
   useEffect(() => {
     loadAlertsData();
@@ -66,13 +82,13 @@ export const AlertsList: React.FunctionComponent = () => {
   useEffect(() => {
     (async () => {
       try {
-        setIsLoadingAlertTypes(true);
+        setAlertTypesState({ ...alertTypesState, isLoading: true });
         const alertTypes = await loadAlertTypes({ http });
         const index: AlertTypeIndex = {};
         for (const alertType of alertTypes) {
           index[alertType.id] = alertType;
         }
-        setAlertTypesIndex(index);
+        setAlertTypesState({ isLoading: false, data: index, isInitialized: true });
       } catch (e) {
         toastNotifications.addDanger({
           title: i18n.translate(
@@ -80,8 +96,7 @@ export const AlertsList: React.FunctionComponent = () => {
             { defaultMessage: 'Unable to load alert types' }
           ),
         });
-      } finally {
-        setIsLoadingAlertTypes(false);
+        setAlertTypesState({ ...alertTypesState, isLoading: false });
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -104,23 +119,8 @@ export const AlertsList: React.FunctionComponent = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    // Avoid flickering before alert types load
-    if (typeof alertTypesIndex === 'undefined') {
-      return;
-    }
-    const updatedData = alerts.map(alert => ({
-      ...alert,
-      tagsText: alert.tags.join(', '),
-      alertType: alertTypesIndex[alert.alertTypeId]
-        ? alertTypesIndex[alert.alertTypeId].name
-        : alert.alertTypeId,
-    }));
-    setData(updatedData);
-  }, [alerts, alertTypesIndex]);
-
   async function loadAlertsData() {
-    setIsLoadingAlerts(true);
+    setAlertsState({ ...alertsState, isLoading: true });
     try {
       const alertsResponse = await loadAlerts({
         http,
@@ -129,8 +129,11 @@ export const AlertsList: React.FunctionComponent = () => {
         typesFilter,
         actionTypesFilter,
       });
-      setAlerts(alertsResponse.data);
-      setTotalItemCount(alertsResponse.total);
+      setAlertsState({
+        isLoading: false,
+        data: alertsResponse.data,
+        totalItemCount: alertsResponse.total,
+      });
     } catch (e) {
       toastNotifications.addDanger({
         title: i18n.translate(
@@ -140,8 +143,7 @@ export const AlertsList: React.FunctionComponent = () => {
           }
         ),
       });
-    } finally {
-      setIsLoadingAlerts(false);
+      setAlertsState({ ...alertsState, isLoading: false });
     }
   }
 
@@ -155,6 +157,18 @@ export const AlertsList: React.FunctionComponent = () => {
       sortable: false,
       truncateText: true,
       'data-test-subj': 'alertsTableCell-name',
+      render: (name: string, alert: AlertTableItem) => {
+        return (
+          <EuiLink
+            title={name}
+            onClick={() => {
+              history.push(routeToAlertDetails.replace(`:alertId`, alert.id));
+            }}
+          >
+            {name}
+          </EuiLink>
+        );
+      },
     },
     {
       field: 'tagsText',
@@ -200,7 +214,7 @@ export const AlertsList: React.FunctionComponent = () => {
     <TypeFilter
       key="type-filter"
       onChange={(types: string[]) => setTypesFilter(types)}
-      options={Object.values(alertTypesIndex || {})
+      options={Object.values(alertTypesState.data)
         .map(alertType => ({
           value: alertType.id,
           name: alertType.name,
@@ -232,99 +246,161 @@ export const AlertsList: React.FunctionComponent = () => {
     );
   }
 
+  const emptyPrompt = (
+    <EuiEmptyPrompt
+      iconType="watchesApp"
+      data-test-subj="createFirstAlertEmptyPrompt"
+      title={
+        <h2>
+          <FormattedMessage
+            id="xpack.triggersActionsUI.sections.alertsList.emptyTitle"
+            defaultMessage="Create your first alert"
+          />
+        </h2>
+      }
+      body={
+        <p>
+          <FormattedMessage
+            id="xpack.triggersActionsUI.sections.alertsList.emptyDesc"
+            defaultMessage="Recieve an alert through email, slack or other connectors when a certain trigger is hit"
+          />
+        </p>
+      }
+      actions={
+        <EuiButton
+          data-test-subj="createFirstAlertButton"
+          key="create-action"
+          fill
+          iconType="plusInCircle"
+          iconSide="left"
+          onClick={() => setAlertFlyoutVisibility(true)}
+        >
+          <FormattedMessage
+            id="xpack.triggersActionsUI.sections.alertsList.emptyButton"
+            defaultMessage="Create alert"
+          />
+        </EuiButton>
+      }
+    />
+  );
+
+  const table = (
+    <Fragment>
+      <EuiFlexGroup gutterSize="s">
+        {selectedIds.length > 0 && canDelete && (
+          <EuiFlexItem grow={false}>
+            <BulkOperationPopover>
+              <AlertQuickEditButtons
+                selectedItems={convertAlertsToTableItems(
+                  filterAlertsById(alertsState.data, selectedIds),
+                  alertTypesState.data
+                )}
+                onPerformingAction={() => setIsPerformingAction(true)}
+                onActionPerformed={() => {
+                  loadAlertsData();
+                  setIsPerformingAction(false);
+                }}
+              />
+            </BulkOperationPopover>
+          </EuiFlexItem>
+        )}
+        <EuiFlexItem>
+          <EuiFieldText
+            fullWidth
+            data-test-subj="alertSearchField"
+            prepend={<EuiIcon type="search" />}
+            onChange={e => setInputText(e.target.value)}
+            onKeyUp={e => {
+              if (e.keyCode === ENTER_KEY) {
+                setSearchText(inputText);
+              }
+            }}
+            placeholder={i18n.translate(
+              'xpack.triggersActionsUI.sections.alertsList.searchPlaceholderTitle',
+              { defaultMessage: 'Search' }
+            )}
+          />
+        </EuiFlexItem>
+        <EuiFlexItem grow={false}>
+          <EuiFlexGroup gutterSize="s">
+            {toolsRight.map((tool, index: number) => (
+              <EuiFlexItem key={index} grow={false}>
+                {tool}
+              </EuiFlexItem>
+            ))}
+          </EuiFlexGroup>
+        </EuiFlexItem>
+      </EuiFlexGroup>
+
+      {/* Large to remain consistent with ActionsList table spacing */}
+      <EuiSpacer size="l" />
+
+      <EuiBasicTable
+        loading={alertsState.isLoading || alertTypesState.isLoading || isPerformingAction}
+        /* Don't display alerts until we have the alert types initialized */
+        items={
+          alertTypesState.isInitialized === false
+            ? []
+            : convertAlertsToTableItems(alertsState.data, alertTypesState.data)
+        }
+        itemId="id"
+        columns={alertsTableColumns}
+        rowProps={() => ({
+          'data-test-subj': 'alert-row',
+        })}
+        cellProps={() => ({
+          'data-test-subj': 'cell',
+        })}
+        data-test-subj="alertsList"
+        pagination={{
+          pageIndex: page.index,
+          pageSize: page.size,
+          /* Don't display alert count until we have the alert types initialized */
+          totalItemCount: alertTypesState.isInitialized === false ? 0 : alertsState.totalItemCount,
+        }}
+        selection={
+          canDelete
+            ? {
+                onSelectionChange(updatedSelectedItemsList: AlertTableItem[]) {
+                  setSelectedIds(updatedSelectedItemsList.map(item => item.id));
+                },
+              }
+            : undefined
+        }
+        onChange={({ page: changedPage }: { page: Pagination }) => {
+          setPage(changedPage);
+        }}
+      />
+    </Fragment>
+  );
+
   return (
     <section data-test-subj="alertsList">
-      <Fragment>
-        <EuiSpacer size="m" />
-        <AlertsContextProvider value={{ alertFlyoutVisible, setAlertFlyoutVisibility }}>
-          <EuiFlexGroup>
-            {selectedIds.length > 0 && canDelete && (
-              <EuiFlexItem grow={false}>
-                <BulkActionPopover
-                  selectedItems={pickFromData(data, selectedIds)}
-                  onPerformingAction={() => setIsPerformingAction(true)}
-                  onActionPerformed={() => {
-                    loadAlertsData();
-                    setIsPerformingAction(false);
-                  }}
-                />
-              </EuiFlexItem>
-            )}
-            <EuiFlexItem>
-              <EuiFieldText
-                fullWidth
-                data-test-subj="alertSearchField"
-                prepend={<EuiIcon type="search" />}
-                onChange={e => setInputText(e.target.value)}
-                onKeyUp={e => {
-                  if (e.keyCode === ENTER_KEY) {
-                    setSearchText(inputText);
-                  }
-                }}
-                placeholder={i18n.translate(
-                  'xpack.triggersActionsUI.sections.alertsList.searchPlaceholderTitle',
-                  { defaultMessage: 'Search...' }
-                )}
-              />
-            </EuiFlexItem>
-            <EuiFlexItem grow={false}>
-              <EuiFlexGroup>
-                {toolsRight.map((tool, index: number) => (
-                  <EuiFlexItem key={index} grow={false}>
-                    {tool}
-                  </EuiFlexItem>
-                ))}
-              </EuiFlexGroup>
-            </EuiFlexItem>
-          </EuiFlexGroup>
-
-          {/* Large to remain consistent with ActionsList table spacing */}
-          <EuiSpacer size="l" />
-
-          <EuiBasicTable
-            loading={isLoadingAlerts || isLoadingAlertTypes || isPerformingAction}
-            items={data}
-            itemId="id"
-            columns={alertsTableColumns}
-            rowProps={() => ({
-              'data-test-subj': 'alert-row',
-            })}
-            cellProps={() => ({
-              'data-test-subj': 'cell',
-            })}
-            data-test-subj="alertsList"
-            pagination={{
-              pageIndex: page.index,
-              pageSize: page.size,
-              totalItemCount,
-            }}
-            selection={
-              canDelete
-                ? {
-                    onSelectionChange(updatedSelectedItemsList: AlertTableItem[]) {
-                      setSelectedIds(updatedSelectedItemsList.map(item => item.id));
-                    },
-                  }
-                : undefined
-            }
-            onChange={({ page: changedPage }: { page: Pagination }) => {
-              setPage(changedPage);
-            }}
-          />
-          <AlertAdd refreshList={loadAlertsData} />
-        </AlertsContextProvider>
-      </Fragment>
+      <EuiSpacer size="m" />
+      {convertAlertsToTableItems(alertsState.data, alertTypesState.data).length !== 0 && table}
+      {convertAlertsToTableItems(alertsState.data, alertTypesState.data).length === 0 &&
+        emptyPrompt}
+      <AlertsContextProvider
+        value={{
+          addFlyoutVisible: alertFlyoutVisible,
+          setAddFlyoutVisibility: setAlertFlyoutVisibility,
+          reloadAlerts: loadAlertsData,
+        }}
+      >
+        <AlertAdd />
+      </AlertsContextProvider>
     </section>
   );
 };
 
-function pickFromData(data: AlertTableItem[], ids: string[]): AlertTableItem[] {
-  const result: AlertTableItem[] = [];
-  for (const id of ids) {
-    const match = data.find(item => item.id === id);
-    if (match) {
-      result.push(match);
-    }
-  }
-  return result;
+function filterAlertsById(alerts: Alert[], ids: string[]): Alert[] {
+  return alerts.filter(alert => ids.includes(alert.id));
+}
+
+function convertAlertsToTableItems(alerts: Alert[], alertTypesIndex: AlertTypeIndex) {
+  return alerts.map(alert => ({
+    ...alert,
+    tagsText: alert.tags.join(', '),
+    alertType: alertTypesIndex[alert.alertTypeId]?.name ?? alert.alertTypeId,
+  }));
 }

@@ -3,28 +3,31 @@
  * or more contributor license agreements. Licensed under the Elastic License;
  * you may not use this file except in compliance with the Elastic License.
  */
-import { capabilities } from 'ui/capabilities';
+import { ActionType } from '../../../../../plugins/actions/common';
 import { TypeRegistry } from './application/type_registry';
+import { SanitizedAlert as Alert, AlertAction } from '../../../alerting/common';
+export { Alert, AlertAction };
+export { ActionType };
 
 export type ActionTypeIndex = Record<string, ActionType>;
 export type AlertTypeIndex = Record<string, AlertType>;
 export type ActionTypeRegistryContract = PublicMethodsOf<TypeRegistry<ActionTypeModel>>;
 export type AlertTypeRegistryContract = PublicMethodsOf<TypeRegistry<AlertTypeModel>>;
 
-export interface ActionConnectorFieldsProps {
-  action: ActionConnector;
+export interface ActionConnectorFieldsProps<TActionCOnnector> {
+  action: TActionCOnnector;
   editActionConfig: (property: string, value: any) => void;
   editActionSecrets: (property: string, value: any) => void;
   errors: { [key: string]: string[] };
-  hasErrors?: boolean;
 }
 
-export interface ActionParamsProps {
-  action: any;
+export interface ActionParamsProps<TParams> {
+  actionParams: TParams;
   index: number;
   editAction: (property: string, value: any, index: number) => void;
   errors: { [key: string]: string[] };
-  hasErrors?: boolean;
+  messageVariables?: string[];
+  defaultMessage?: string;
 }
 
 export interface Pagination {
@@ -36,19 +39,15 @@ export interface ActionTypeModel {
   id: string;
   iconClass: string;
   selectMessage: string;
-  validateConnector: (action: ActionConnector) => ValidationResult;
+  actionTypeTitle?: string;
+  validateConnector: (connector: any) => ValidationResult;
   validateParams: (actionParams: any) => ValidationResult;
-  actionConnectorFields: React.FunctionComponent<ActionConnectorFieldsProps> | null;
-  actionParamsFields: React.FunctionComponent<ActionParamsProps> | null;
+  actionConnectorFields: React.FunctionComponent<any> | null;
+  actionParamsFields: any;
 }
 
 export interface ValidationResult {
   errors: Record<string, any>;
-}
-
-export interface ActionType {
-  id: string;
-  name: string;
 }
 
 export interface ActionConnector {
@@ -69,30 +68,8 @@ export interface ActionConnectorTableItem extends ActionConnector {
 export interface AlertType {
   id: string;
   name: string;
-}
-
-export interface AlertAction {
-  group: string;
-  id: string;
-  params: Record<string, any>;
-}
-
-export interface Alert {
-  id: string;
-  name: string;
-  tags: string[];
-  enabled: boolean;
-  alertTypeId: string;
-  interval: string;
-  actions: AlertAction[];
-  params: Record<string, any>;
-  scheduledTaskId?: string;
-  createdBy: string | null;
-  updatedBy: string | null;
-  apiKeyOwner?: string;
-  throttle: string | null;
-  muteAll: boolean;
-  mutedInstanceIds: string[];
+  actionGroups: string[];
+  actionVariables: string[];
 }
 
 export type AlertWithoutId = Omit<Alert, 'id'>;
@@ -108,6 +85,7 @@ export interface AlertTypeModel {
   iconClass: string;
   validate: (alert: Alert) => ValidationResult;
   alertParamsExpression: React.FunctionComponent<any>;
+  defaultActionMessage?: string;
 }
 
 export interface IErrorObject {
@@ -116,5 +94,4 @@ export interface IErrorObject {
 
 export interface LegacyDependencies {
   MANAGEMENT_BREADCRUMB: { text: string; href?: string };
-  capabilities: typeof capabilities;
 }

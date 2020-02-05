@@ -33,7 +33,6 @@ import { capabilitiesServiceMock } from './capabilities/capabilities_service.moc
 export { httpServerMock } from './http/http_server.mocks';
 export { sessionStorageMock } from './http/cookie_session_storage.mocks';
 export { configServiceMock } from './config/config_service.mock';
-import { createMockEnv } from './config/env.mock';
 export { elasticsearchServiceMock } from './elasticsearch/elasticsearch_service.mock';
 export { httpServiceMock } from './http/http_service.mock';
 export { loggingServiceMock } from './logging/logging_service.mock';
@@ -44,7 +43,7 @@ import { uuidServiceMock } from './uuid/uuid_service.mock';
 
 export function pluginInitializerContextConfigMock<T>(config: T) {
   const globalConfig: SharedGlobalConfig = {
-    kibana: { defaultAppId: 'home-mocks', index: '.kibana-tests' },
+    kibana: { index: '.kibana-tests' },
     elasticsearch: {
       shardTimeout: duration('30s'),
       requestTimeout: duration('30s'),
@@ -98,10 +97,15 @@ function createCoreSetupMock() {
     registerOnPostAuth: httpService.registerOnPostAuth,
     registerOnPreResponse: httpService.registerOnPreResponse,
     basePath: httpService.basePath,
-    csp: new CspConfig(createMockEnv()),
+    csp: CspConfig.DEFAULT,
     isTlsEnabled: httpService.isTlsEnabled,
     createRouter: jest.fn(),
     registerRouteHandlerContext: jest.fn(),
+    auth: {
+      get: httpService.auth.get,
+      isAuthenticated: httpService.auth.isAuthenticated,
+    },
+    getServerInfo: httpService.getServerInfo,
   };
   httpMock.createRouter.mockImplementation(() => httpService.createRouter(''));
 
